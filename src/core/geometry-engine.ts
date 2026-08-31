@@ -16,7 +16,7 @@ export class GeometryEngine {
 
   async initialize() {
     try {
-      const module = await import('../../wasm/floor-core/pkg/floor_core.js') as unknown as WasmGeometry
+      const module = (await import('../../wasm/floor-core/pkg/floor_core.js')) as unknown as WasmGeometry
       await module.default()
       this.wasm = module
       this.state = 'ready'
@@ -27,14 +27,31 @@ export class GeometryEngine {
     return this.state
   }
 
-  get status() { return this.state }
-  private requireWasm() { if (!this.wasm) throw new Error('Rust geometry engine is unavailable.'); return this.wasm }
-  deriveRooms(floor: Floor): DerivedRoom[] { return JSON.parse(this.requireWasm().derive_rooms(JSON.stringify(floor))) }
-  validate(floor: Floor): ValidationIssue[] { return JSON.parse(this.requireWasm().validate_floor(JSON.stringify(floor))) }
-  snap(floor: Floor, point: PointMm, toleranceMm = 180): PointMm { return JSON.parse(this.requireWasm().snap_point(JSON.stringify(floor), point.x, point.y, toleranceMm)) }
-  hitTestWall(floor: Floor, point: PointMm, toleranceMm = 180): string | null { return this.requireWasm().hit_test_wall(JSON.stringify(floor), point.x, point.y, toleranceMm) || null }
-  wallVertices(floor: Floor) { return this.requireWasm().wall_render_vertices(JSON.stringify(floor)) }
-  roomVertices(floor: Floor) { return this.requireWasm().room_render_vertices(JSON.stringify(floor)) }
+  get status() {
+    return this.state
+  }
+  private requireWasm() {
+    if (!this.wasm) throw new Error('Rust geometry engine is unavailable.')
+    return this.wasm
+  }
+  deriveRooms(floor: Floor): DerivedRoom[] {
+    return JSON.parse(this.requireWasm().derive_rooms(JSON.stringify(floor)))
+  }
+  validate(floor: Floor): ValidationIssue[] {
+    return JSON.parse(this.requireWasm().validate_floor(JSON.stringify(floor)))
+  }
+  snap(floor: Floor, point: PointMm, toleranceMm = 180): PointMm {
+    return JSON.parse(this.requireWasm().snap_point(JSON.stringify(floor), point.x, point.y, toleranceMm))
+  }
+  hitTestWall(floor: Floor, point: PointMm, toleranceMm = 180): string | null {
+    return this.requireWasm().hit_test_wall(JSON.stringify(floor), point.x, point.y, toleranceMm) || null
+  }
+  wallVertices(floor: Floor) {
+    return this.requireWasm().wall_render_vertices(JSON.stringify(floor))
+  }
+  roomVertices(floor: Floor) {
+    return this.requireWasm().room_render_vertices(JSON.stringify(floor))
+  }
 }
 
 export const geometry = new GeometryEngine()
