@@ -1,0 +1,19 @@
+[package]
+name = "floor-core"
+version = "1.0.0"
+edition = "2024"
+description = "Deterministic floor-plan geometry for Floor Studio"
+license-file = "../../LICENSE"
+repository = "https://github.com/kreddevils18/floor-studio-webmcp"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "0.2.127"
+
+[profile.release]
+opt-level = "s"
+lto = true
