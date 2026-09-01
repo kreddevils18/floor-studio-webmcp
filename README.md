@@ -36,13 +36,13 @@ Open the app in a native WebMCP-capable browser, then ask Codex:
 
 Floor Studio exposes exactly 17 tools for project context, transactional layout/style changes, validation, presentation, focus, queued render jobs, and bounded raster upload. There is deliberately no approval tool. A valid presented draft exposes local **Approve** and **Reject** controls; the visible project state is only **Draft** or **Saved**.
 
-The one-screen shell has **2D**, **3D**, and **Render** tabs. The default 2D view is a technical plan; 3D is a lazy-loaded Three.js isometric view of the same document; Render shows one revision/mode-bound Image Gen artifact. The horizontal component rail focuses matching furniture without exposing manual authoring. **Export** downloads the selected 2D/3D render and never exports project JSON.
+The one-screen shell has **2D**, **3D**, and **Render** tabs. The default 2D view is a technical plan; 3D is a lazy-loaded Three.js isometric view of the same document. A 3D Render is an authoritative 1536×1024 capture from that metric scene. A 2D Render remains a revision-bound external Image Gen concept and is labeled as not geometry-verified. The horizontal component rail focuses matching furniture without exposing manual authoring. **Export** downloads the selected artifact and never exports project JSON.
 
 ```text
 Codex reads context → opens a revision-bound change → stages layout/style
 → validates → presents → human approves/rejects locally
-→ human queues 2D/3D Render → Codex reads and claims the job
-→ Image Gen runs externally → Codex uploads the verified raster preview
+→ human captures authoritative 3D locally, or queues a 2D concept Render
+→ Codex claims the 2D job → Image Gen runs externally → Codex uploads the concept raster
 ```
 
 | Tools | Trust/side-effect classification |
@@ -69,6 +69,6 @@ flowchart LR
 
 Projects, immutable saved revisions, drafts, typed agent timeline events, render tickets, preview metadata, and preview blobs stay in browser IndexedDB. Database schema version 3 removes the obsolete request/activity stores without deleting project or revision data. Started tool events left by a reload recover as failed `INTERRUPTED` events. Legacy preview tickets are normalized to the queued/rendering lifecycle on load.
 
-Preview uploads accept PNG, JPEG, and WebP only, enforce ordered bounded chunks, declare a byte count and SHA-256 digest, and use a project/revision/render-mode-bound ticket. Version selection is read-only; the newest revision is always listed first and history is locked while a draft is active.
+Preview uploads accept PNG, JPEG, and WebP only, enforce ordered bounded chunks, declare a byte count and SHA-256 digest, must decode successfully at a minimum of 512×512 pixels, and use a project/revision/render-mode-bound ticket. These transport checks do not verify concept geometry. Version selection is read-only; the newest revision is always listed first and history is locked while a draft is active.
 
 See [docs/demo-script.md](docs/demo-script.md) for the complete demo and [docs/system-architecture.md](docs/system-architecture.md) for boundaries and invariants.

@@ -9,7 +9,7 @@ Floor Studio is a single-route static browser application. GitHub Pages serves i
 - The Rust/WebAssembly core remains the geometry authority. JavaScript does not maintain a second scene model.
 - IndexedDB stores the active project, immutable saved revisions, draft changes, a bounded typed agent timeline, render jobs, preview metadata, and binary image blobs. Approval serializes against the exact persisted base revision.
 - Native WebMCP tools register directly on `document.modelContext`. A single catalog owns metadata, schemas, handlers, registration, UI disclosure, and tests. One `AbortController` owns registration lifetime; unsupported or partially registered browsers are reported truthfully.
-- Image generation occurs outside the page. The local Render button queues one whole-floor 2D or 3D job. Codex discovers and claims it through WebMCP, captures the declared plan or Three.js target, invokes Image Gen externally, and streams the raster back through bounded upload tools.
+- Authoritative 3D rendering stays inside the page. The scene registers a capture provider after React Three Fiber mounts the metric scene; Render creates a dedicated orthographic camera, produces a fixed 1536×1024 offscreen Three.js frame, and persists its project hash, raster hash, camera matrices, renderer version, and revision. External Image Gen remains available for 2D concept previews: Codex claims the queued job through WebMCP and streams the raster back through bounded upload tools. Concept previews are never described as geometry-verified.
 
 The Three.js scene is lazy-loaded so the 2D review shell remains the initial experience. No SVG drawing primitive or Three.js object is persisted as a second design model.
 
@@ -27,7 +27,7 @@ Historical revisions are display-only projections from immutable revision record
 
 Schemas reject unexpected properties and enforce lengths, item bounds, enums, patterns, and numeric ranges at runtime. Semantic validators enforce entity uniqueness, opening references, style-room references, operation conflicts, maximum transaction sizes, and non-empty meaningful changes.
 
-Render jobs progress through `queued → rendering → ready`, with `failed` for terminal errors. Only one project job may be active. Claim and upload leases expire independently so abandoned work can be retried safely. Preview uploads allow PNG, JPEG, and WebP only. Each upload declares its byte count and SHA-256 digest, uses ordered decoded chunks no larger than 256 KiB, is capped at 12 MB, and holds an expiring single-owner lease. Commit and abort recheck ownership before changing durable state. SVG and malformed or incomplete uploads are rejected.
+Concept render jobs progress through `queued → rendering → ready`, with `failed` for terminal errors. Only one project job may be active. Claim and upload leases expire independently so abandoned work can be retried safely. Preview uploads allow PNG, JPEG, and WebP only. Each upload declares its byte count and SHA-256 digest, uses ordered decoded chunks no larger than 256 KiB, is capped at 12 MB, must decode successfully at a minimum of 512×512 pixels, and holds an expiring single-owner lease. Commit and abort recheck ownership before changing durable state. These checks prove transport integrity, not structural fidelity. Authoritative Three.js captures are persisted atomically only when the project-document hash matches the active saved revision and the raster hash matches the captured bytes.
 
 ## Persistence migration
 

@@ -20,7 +20,9 @@ When the presented draft is valid, inspect the orange proposed geometry and chec
 
 ## Revision-bound preview
 
-Select 2D or 3D inside Render, then press **Render**. Confirm the UI shows **Queued**. Have Codex call `floor.get_render_job`, then `floor.claim_render_job`; capture `[data-capture-target="plan-2d"]` for 2D or `[data-capture-target="scene-3d"]` for 3D. Generate the whole-floor image with Image Gen and upload it with `floor.preview_begin`, ordered `floor.preview_chunk` calls, and `floor.preview_commit`. Confirm **Rendering** becomes **Ready**, then use **Export** to download the exact revision/mode artifact.
+Select 3D inside Render, then press **Render**. Confirm the UI returns with **Geometry-authoritative**, identifies **Metric 3D scene** as the source, and produces a 1536×1024 capture without shell or timeline pixels. Export it and confirm it preserves the exact metric scene.
+
+Select 2D inside Render, then press **Render**. Confirm the UI shows **Queued**. Have Codex call `floor.get_render_job`, then `floor.claim_render_job`; capture `[data-capture-target="plan-2d"]`, generate the whole-floor concept with Image Gen, and upload it with `floor.preview_begin`, ordered `floor.preview_chunk` calls, and `floor.preview_commit`. Confirm **Rendering** becomes **Concept ready** and the source reads **External AI · Concept only**.
 
 Use the version dropdown to preview the older revision without writing data. Confirm Render is disabled there, while an existing older artifact remains viewable/exportable.
 
