@@ -1,7 +1,10 @@
 export type Millimetres = number
 export type EntityId = string
 
-export interface PointMm { x: Millimetres; y: Millimetres }
+export interface PointMm {
+  x: Millimetres
+  y: Millimetres
+}
 
 export interface Wall {
   id: EntityId
@@ -89,9 +92,7 @@ export type LayoutPatch = {
   furniture?: { upsert?: FurnitureSymbol[]; remove?: EntityId[] }
 }
 
-export type ChangeOperation =
-  | { kind: 'layout'; patch: LayoutPatch }
-  | { kind: 'style'; styles: RoomStyle[] }
+export type ChangeOperation = { kind: 'layout'; patch: LayoutPatch } | { kind: 'style'; styles: RoomStyle[] }
 
 export interface ValidationIssue {
   code: string
@@ -106,27 +107,31 @@ export interface ChangeSet {
   baseRevision: number
   operations: ChangeOperation[]
   validationResults: ValidationIssue[]
-  status: 'draft' | 'presented' | 'discarded' | 'approved'
-  requestId?: EntityId
+  status: 'draft' | 'presented' | 'discarded' | 'saved' | 'rejected'
+  resultRevision?: number
   createdAt: string
 }
 
-export interface HumanRequest {
-  id: EntityId
-  projectId: EntityId
-  text: string
-  selection: EntityId[]
-  status: 'pending' | 'claimed' | 'completed' | 'failed'
-  createdAt: string
-  updatedAt: string
-}
+export type RenderMode = '2d' | '3d'
 
-export interface ActivityEvent {
+export interface AgentTimelineEvent {
   id: EntityId
   projectId: EntityId
-  kind: string
-  message: string
-  createdAt: string
+  sessionId: string
+  callId: string
+  sequence: number
+  toolName: string
+  phase: 'started' | 'succeeded' | 'failed' | 'awaiting-human'
+  startedAt: string
+  completedAt?: string
+  durationMs?: number
+  inputSummary?: string
+  outputSummary?: string
+  errorCode?: string
+  baseRevision?: number
+  resultRevision?: number
+  changeId?: string
+  entityIds?: string[]
 }
 
 export interface DerivedRoom {
@@ -141,11 +146,36 @@ export interface PreviewTicket {
   projectId: EntityId
   target: { kind: 'room'; roomId: EntityId } | { kind: 'floor' }
   sourcePlanRevision: number
+  renderMode: RenderMode
+  artifactKind?: PreviewArtifactKind
   prompt: string
-  status: 'prepared' | 'uploading' | 'ready' | 'failed'
+  status: 'queued' | 'rendering' | 'ready' | 'failed'
+  renderLeaseExpiresAt?: string
   uploadOwnerId?: string
   uploadLeaseExpiresAt?: string
   createdAt: string
+}
+
+export type PreviewArtifactKind = 'authoritative' | 'concept'
+
+export interface RenderSourceManifest {
+  documentHash: string
+  sourceHash: string
+  width: number
+  height: number
+  renderer: 'three.js'
+  rendererVersion: string
+  capturedAt: string
+  camera: {
+    position: number[]
+    quaternion: number[]
+    projectionMatrix: number[]
+  }
+}
+
+export interface AuthoritativeRenderCapture {
+  blob: Blob
+  manifest: RenderSourceManifest
 }
 
 export interface PreviewAsset {
@@ -154,6 +184,9 @@ export interface PreviewAsset {
   projectId: EntityId
   target: PreviewTicket['target']
   sourcePlanRevision: number
+  renderMode: RenderMode
+  artifactKind?: PreviewArtifactKind
+  sourceManifest?: RenderSourceManifest
   prompt: string
   mimeType: 'image/png' | 'image/jpeg' | 'image/webp'
   checksum: string
@@ -172,12 +205,15 @@ export interface RevisionRecord {
 export interface StudioSnapshot {
   project: ProjectDocumentV1
   draft: ChangeSet | null
-  requests: HumanRequest[]
-  activity: ActivityEvent[]
+  timeline: AgentTimelineEvent[]
   previews: PreviewAsset[]
+  tickets: PreviewTicket[]
   versions: RevisionRecord[]
   selectedIds: string[]
-  activeView: '2d' | '3d'
+  activeView: '2d' | '3d' | 'render'
+  renderMode: RenderMode
+  selectedRevision: number
+  projectState: 'draft' | 'saved'
 }
 
 export const nowIso = () => new Date().toISOString()
