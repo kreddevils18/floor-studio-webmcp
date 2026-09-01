@@ -4,7 +4,29 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { geometry } from '../../core/geometry-engine'
 import type { ProjectDocumentV1 } from '../../domain/model'
+import { registerAuthoritative3dCapture } from './render-capture'
 import { planBounds, wallBlocks } from './scene-geometry'
+
+const CAPTURE_WIDTH = 1536
+const CAPTURE_HEIGHT = 1024
+
+async function sha256(bytes: BufferSource) {
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function nextFrame() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+}
+
+function canvasBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('Three.js did not produce a PNG capture.'))),
+      'image/png',
+    )
+  })
+}
 
 interface SceneProps {
   approved: ProjectDocumentV1
@@ -54,6 +76,83 @@ function CameraRig({ project, selectedIds }: Pick<SceneProps, 'selectedIds'> & {
     controls.current?.target.set(...target)
     controls.current?.update()
   }, [bounds, camera, project, selectedIds, size])
+  return null
+}
+
+function CaptureBridge({ project }: { project: ProjectDocumentV1 }) {
+  const { gl, scene } = useThree()
+  useEffect(() => {
+    let mounted = true
+    const unregister = registerAuthoritative3dCapture(async () => {
+      await nextFrame()
+      if (!mounted) throw new Error('The 3D scene was closed before capture completed.')
+      const canvas = document.createElement('canvas')
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, preserveDrawingBuffer: true })
+      renderer.setPixelRatio(1)
+      renderer.setSize(CAPTURE_WIDTH, CAPTURE_HEIGHT, false)
+      renderer.outputColorSpace = gl.outputColorSpace
+      renderer.toneMapping = gl.toneMapping
+      const bounds = planBounds(project)
+      const aspect = CAPTURE_WIDTH / CAPTURE_HEIGHT
+      const halfHeight = Math.max(3, (bounds.height * 1.45) / 2, (bounds.width * 1.45) / (2 * aspect))
+      const captureCamera = new THREE.OrthographicCamera(
+        -halfHeight * aspect,
+        halfHeight * aspect,
+        halfHeight,
+        -halfHeight,
+        0.01,
+        200,
+      )
+      const span = Math.max(bounds.width, bounds.height, 6)
+      captureCamera.position.set(bounds.centerX + span * 0.85, span * 0.9, bounds.centerY + span * 0.85)
+      captureCamera.lookAt(bounds.centerX, 0, bounds.centerY)
+      captureCamera.updateProjectionMatrix()
+      const restoredColors: Array<{ material: THREE.MeshStandardMaterial; color: THREE.Color }> = []
+      scene.traverse((object) => {
+        if (
+          object instanceof THREE.Mesh &&
+          object.userData.authoritativeWall === true &&
+          object.material instanceof THREE.MeshStandardMaterial
+        ) {
+          restoredColors.push({ material: object.material, color: object.material.color.clone() })
+          object.material.color.set('#ffffff')
+        }
+      })
+      let blob: Blob
+      try {
+        renderer.render(scene, captureCamera)
+        blob = await canvasBlob(canvas)
+      } finally {
+        for (const restored of restoredColors) restored.material.color.copy(restored.color)
+        renderer.dispose()
+      }
+      const [sourceHash, documentHash] = await Promise.all([
+        sha256(await blob.arrayBuffer()),
+        sha256(new TextEncoder().encode(JSON.stringify(project))),
+      ])
+      return {
+        blob,
+        manifest: {
+          documentHash,
+          sourceHash,
+          width: CAPTURE_WIDTH,
+          height: CAPTURE_HEIGHT,
+          renderer: 'three.js' as const,
+          rendererVersion: THREE.REVISION,
+          capturedAt: new Date().toISOString(),
+          camera: {
+            position: captureCamera.position.toArray(),
+            quaternion: captureCamera.quaternion.toArray(),
+            projectionMatrix: captureCamera.projectionMatrix.toArray(),
+          },
+        },
+      }
+    })
+    return () => {
+      mounted = false
+      unregister()
+    }
+  }, [gl, project, scene])
   return null
 }
 
@@ -135,6 +234,7 @@ function WallMeshes({
               key={`${draft ? 'draft' : 'approved'}:${block.id}`}
               position={block.center}
               rotation={[0, block.rotation, 0]}
+              userData={{ authoritativeWall: !draft }}
             >
               <boxGeometry args={block.size} />
               <meshStandardMaterial
@@ -195,6 +295,7 @@ function Scene(props: SceneProps) {
       <ambientLight intensity={2.2} />
       <directionalLight position={[8, 16, 8]} intensity={2.8} />
       <CameraRig project={props.staged} selectedIds={props.selectedIds} />
+      <CaptureBridge project={props.staged} />
       <FloorMeshes project={props.approved} />
       <WallMeshes project={props.approved} selectedIds={props.selectedIds} />
       <FurnitureMeshes project={props.approved} />

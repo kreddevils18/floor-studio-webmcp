@@ -1,10 +1,12 @@
 import type { PreviewAsset, PreviewTicket, RenderMode } from './model'
 import { newId, nowIso } from './model'
+import { validateRasterBlob } from './raster-validation'
 import type { StudioService } from './studio-service'
 
 export const PREVIEW_CHUNK_BYTES = 256 * 1024
 export const PREVIEW_MAX_BYTES = 12 * 1024 * 1024
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const PREVIEW_MIN_EDGE = 512
 
 interface UploadSession {
   ticket: PreviewTicket
@@ -69,6 +71,7 @@ export class PreviewUploadService {
       target: { kind: 'floor' },
       sourcePlanRevision: project.revision,
       renderMode,
+      artifactKind: 'concept',
       prompt,
       status: 'queued',
       createdAt: nowIso(),
@@ -160,6 +163,15 @@ export class PreviewUploadService {
     if (!valid) throw new Error('Preview bytes do not match the declared raster type.')
     const blobRef = newId('blob')
     const blob = new Blob([bytes], { type: session.mimeType })
+    try {
+      await validateRasterBlob(blob, { minWidth: PREVIEW_MIN_EDGE, minHeight: PREVIEW_MIN_EDGE })
+    } catch (error) {
+      throw new Error(
+        error instanceof Error && error.message.startsWith('The raster must be at least')
+          ? `Concept previews must be at least ${PREVIEW_MIN_EDGE} × ${PREVIEW_MIN_EDGE} pixels.`
+          : 'Concept preview raster could not be decoded.',
+      )
+    }
     const asset: PreviewAsset = {
       id: newId('preview'),
       ticketId,
@@ -167,6 +179,7 @@ export class PreviewUploadService {
       target: session.ticket.target,
       sourcePlanRevision: session.ticket.sourcePlanRevision,
       renderMode: session.ticket.renderMode,
+      artifactKind: 'concept',
       prompt: session.ticket.prompt,
       mimeType: session.mimeType,
       checksum: actual,

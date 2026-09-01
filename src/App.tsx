@@ -17,6 +17,7 @@ import { operationEntityIds } from './domain/change-set'
 import type { AgentTimelineEvent, ChangeSet, PreviewAsset, PreviewTicket, RenderMode } from './domain/model'
 import { PreviewUploadService } from './domain/preview-upload'
 import { studio } from './domain/studio-service'
+import { captureAuthoritative3d } from './features/spatial-view/render-capture'
 import { SpatialView } from './features/spatial-view/spatial-view'
 import { registrationState } from './webmcp/registration-state'
 import { toolByName, toolCatalog } from './webmcp/tool-catalog'
@@ -39,6 +40,8 @@ export default function App() {
   const [infoOpen, setInfoOpen] = useState(false)
   const [timelineOpen, setTimelineOpen] = useState(() => window.innerWidth > 1120)
   const [message, setMessage] = useState('')
+  const [captureInProgress, setCaptureInProgress] = useState(false)
+  const captureInProgressRef = useRef(false)
   if (!snapshot)
     return (
       <div className="loading-screen">
@@ -68,7 +71,7 @@ export default function App() {
       ? activeTicket
       : undefined
   const modeStatus = currentPreview ? 'ready' : (modeTicket?.status ?? (failedTicket ? 'failed' : 'empty'))
-  const canRender = latestSelected && !snapshot.draft && !activeTicket
+  const canRender = latestSelected && !snapshot.draft && !activeTicket && !captureInProgress
 
   const run = async (action: () => Promise<unknown>) => {
     try {
@@ -102,13 +105,28 @@ export default function App() {
         onInfo={() => setInfoOpen(true)}
         onTimeline={() => setTimelineOpen((open) => !open)}
         timelineOpen={timelineOpen}
-        previewReady={Boolean(currentPreview)}
+        preview={currentPreview}
         renderStatus={renderStatus}
+        captureInProgress={captureInProgress}
         activeTicket={activeTicket}
         canRender={canRender}
         onRender={() =>
           run(async () => {
-            await previewUpload.prepare(snapshot.renderMode)
+            if (snapshot.renderMode === '3d') {
+              if (captureInProgressRef.current) return
+              captureInProgressRef.current = true
+              setCaptureInProgress(true)
+              try {
+                studio.setView('3d')
+                const capture = await captureAuthoritative3d()
+                await studio.saveAuthoritative3dPreview(capture)
+              } finally {
+                captureInProgressRef.current = false
+                setCaptureInProgress(false)
+              }
+            } else {
+              await previewUpload.prepare('2d')
+            }
             studio.setView('render')
           })
         }
@@ -172,8 +190,9 @@ function Header({
   onInfo,
   onTimeline,
   timelineOpen,
-  previewReady,
+  preview,
   renderStatus,
+  captureInProgress,
   activeTicket,
   canRender,
   onRender,
@@ -183,8 +202,9 @@ function Header({
   onInfo: () => void
   onTimeline: () => void
   timelineOpen: boolean
-  previewReady: boolean
+  preview?: PreviewAsset
   renderStatus: PreviewTicket['status'] | 'empty'
+  captureInProgress: boolean
   activeTicket?: PreviewTicket
   canRender: boolean
   onRender: () => void
@@ -196,13 +216,16 @@ function Header({
     : health.failed.length || health.registered !== health.expected
       ? 'Partial'
       : 'Connected'
-  const renderLabel =
-    renderStatus === 'queued'
+  const renderLabel = captureInProgress
+    ? 'Capturing 3D'
+    : renderStatus === 'queued'
       ? `Queued · ${activeTicket?.renderMode.toUpperCase()}`
       : renderStatus === 'rendering'
         ? `Rendering · ${activeTicket?.renderMode.toUpperCase()}`
         : renderStatus === 'ready'
-          ? 'Ready'
+          ? preview?.artifactKind === 'authoritative'
+            ? 'Geometry-authoritative'
+            : 'Concept ready'
           : renderStatus === 'failed'
             ? 'Failed'
             : 'Not rendered'
@@ -219,11 +242,11 @@ function Header({
         </div>
       </div>
 
-      <label className={`version-select ${snapshot.draft ? 'disabled' : ''}`}>
+      <label className={`version-select ${snapshot.draft || captureInProgress ? 'disabled' : ''}`}>
         <span className="sr-only">Project version</span>
         <select
           value={snapshot.selectedRevision}
-          disabled={Boolean(snapshot.draft)}
+          disabled={Boolean(snapshot.draft) || captureInProgress}
           onChange={(event) => studio.selectRevision(Number(event.target.value))}
         >
           {snapshot.versions.map((version, index) => (
@@ -243,6 +266,7 @@ function Header({
             key={view}
             role="tab"
             aria-selected={snapshot.activeView === view}
+            disabled={captureInProgress}
             onClick={() => studio.setView(view)}
           >
             {view}
@@ -260,15 +284,15 @@ function Header({
       <button className="icon-button" onClick={onInfo} aria-label="How to use Floor Studio">
         <Info />
       </button>
-      <output className={`render-state render-${renderStatus}`} aria-live="polite">
-        {(renderStatus === 'queued' || renderStatus === 'rendering') && <LoaderCircle />}
+      <output className={`render-state render-${captureInProgress ? 'rendering' : renderStatus}`} aria-live="polite">
+        {(captureInProgress || renderStatus === 'queued' || renderStatus === 'rendering') && <LoaderCircle />}
         {renderLabel}
       </output>
       <button className="render-button" onClick={onRender} disabled={!canRender}>
         Render
       </button>
       <button
-        className={`export-button ${previewReady ? 'ready' : 'waiting'}`}
+        className={`export-button ${preview ? 'ready' : 'waiting'}`}
         onClick={onExport}
         aria-label="Export current rendered image"
       >
@@ -372,12 +396,21 @@ function RenderOutput({
 }) {
   const assets = useMemo(() => (asset ? [asset] : []), [asset])
   const urls = usePreviewUrls(assets)
+  const artifactKind =
+    asset?.artifactKind ?? (ticket ? (ticket.artifactKind ?? 'concept') : mode === '3d' ? 'authoritative' : 'concept')
+  const authoritative = artifactKind === 'authoritative'
   return (
     <section className="render-output" aria-label="Rendered image output">
       <header>
         <div>
-          <span>RENDER PREVIEW</span>
-          <h1>{mode === '2d' ? 'Top-down floor render' : 'Isometric floor render'}</h1>
+          <span>{authoritative ? 'METRIC 3D CAPTURE' : 'AI CONCEPT PREVIEW'}</span>
+          <h1>
+            {authoritative
+              ? 'Authoritative isometric render'
+              : mode === '2d'
+                ? 'Top-down concept preview'
+                : 'Isometric concept preview'}
+          </h1>
         </div>
         <fieldset className="render-mode-switch">
           <legend className="sr-only">Render mode</legend>
@@ -390,7 +423,14 @@ function RenderOutput({
       </header>
       <div className={`render-frame state-${status}`}>
         {asset && urls[asset.id] ? (
-          <img src={urls[asset.id]} alt={`${mode.toUpperCase()} whole-floor architectural render`} />
+          <img
+            src={urls[asset.id]}
+            alt={
+              authoritative
+                ? `Authoritative 3D render of revision v${revision} from the metric scene`
+                : `AI-generated concept preview for revision v${revision}; not geometry-verified`
+            }
+          />
         ) : (
           <div className="render-placeholder">
             {(status === 'queued' || status === 'rendering') && <LoaderCircle />}
@@ -398,17 +438,21 @@ function RenderOutput({
               {status === 'queued'
                 ? 'Queued for Codex'
                 : status === 'rendering'
-                  ? 'Generating image…'
+                  ? 'Generating concept…'
                   : status === 'failed'
                     ? 'Render failed'
-                    : 'No render yet'}
+                    : authoritative
+                      ? 'No 3D capture yet'
+                      : 'No concept preview yet'}
             </strong>
             <p>
               {status === 'queued'
                 ? 'Codex can now claim this revision-bound job through WebMCP.'
                 : status === 'rendering'
-                  ? 'Image Gen output will appear here after its verified upload completes.'
-                  : 'Choose 2D or 3D, then use Render to create a revision-bound job.'}
+                  ? 'The concept preview will appear after its upload completes.'
+                  : authoritative
+                    ? 'Use Render to capture this revision from the metric 3D scene.'
+                    : 'Use Render to request an AI concept preview for this revision.'}
             </p>
           </div>
         )}
@@ -416,7 +460,7 @@ function RenderOutput({
       <footer>
         <div>
           <span>Source</span>
-          <strong>{mode === '2d' ? '2D plan' : '3D isometric'}</strong>
+          <strong>{authoritative ? 'Metric 3D scene' : 'External AI · Concept only'}</strong>
         </div>
         <div>
           <span>Revision</span>
@@ -424,7 +468,15 @@ function RenderOutput({
         </div>
         <div>
           <span>Status</span>
-          <strong>{status === 'empty' ? 'Not rendered' : status}</strong>
+          <strong>
+            {status === 'empty'
+              ? 'Not rendered'
+              : status === 'ready'
+                ? authoritative
+                  ? 'Geometry-authoritative'
+                  : 'Concept ready'
+                : status}
+          </strong>
         </div>
         <div>
           <span>Requested</span>
@@ -566,8 +618,9 @@ function InfoDrawer({
         <section>
           <p>
             Describe the home change in Codex. Codex reads the metric project, stages WebMCP mutations, validates them,
-            and presents a structured draft. You approve or reject locally. Use Render to queue a revision-bound 2D or
-            3D Image Gen job for Codex.
+            and presents a structured draft. You approve or reject locally. In 3D, Render captures an authoritative
+            image from the metric scene. In 2D, Render queues a revision-bound Image Gen concept through WebMCP;
+            uploaded concepts are not structurally verified.
           </p>
           <h3>Example prompt</h3>
           <pre>{examplePrompt}</pre>

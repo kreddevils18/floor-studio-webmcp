@@ -147,12 +147,35 @@ export interface PreviewTicket {
   target: { kind: 'room'; roomId: EntityId } | { kind: 'floor' }
   sourcePlanRevision: number
   renderMode: RenderMode
+  artifactKind?: PreviewArtifactKind
   prompt: string
   status: 'queued' | 'rendering' | 'ready' | 'failed'
   renderLeaseExpiresAt?: string
   uploadOwnerId?: string
   uploadLeaseExpiresAt?: string
   createdAt: string
+}
+
+export type PreviewArtifactKind = 'authoritative' | 'concept'
+
+export interface RenderSourceManifest {
+  documentHash: string
+  sourceHash: string
+  width: number
+  height: number
+  renderer: 'three.js'
+  rendererVersion: string
+  capturedAt: string
+  camera: {
+    position: number[]
+    quaternion: number[]
+    projectionMatrix: number[]
+  }
+}
+
+export interface AuthoritativeRenderCapture {
+  blob: Blob
+  manifest: RenderSourceManifest
 }
 
 export interface PreviewAsset {
@@ -162,6 +185,8 @@ export interface PreviewAsset {
   target: PreviewTicket['target']
   sourcePlanRevision: number
   renderMode: RenderMode
+  artifactKind?: PreviewArtifactKind
+  sourceManifest?: RenderSourceManifest
   prompt: string
   mimeType: 'image/png' | 'image/jpeg' | 'image/webp'
   checksum: string

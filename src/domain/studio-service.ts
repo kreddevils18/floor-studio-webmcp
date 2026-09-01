@@ -3,6 +3,7 @@ import { database, getBlob, saveBlob, saveInitialProject } from '../data/databas
 import { validateLayoutPatch, validateStyles } from './change-set'
 import type {
   AgentTimelineEvent,
+  AuthoritativeRenderCapture,
   ChangeOperation,
   ChangeSet,
   LayoutPatch,
@@ -16,6 +17,7 @@ import type {
   ValidationIssue,
 } from './model'
 import { newId, nowIso } from './model'
+import { validateRasterBlob } from './raster-validation'
 import { createSampleProject } from './sample-project'
 
 const clone = <T>(value: T): T => structuredClone(value)
@@ -349,6 +351,7 @@ export class StudioService {
         let normalized: PreviewTicket = {
           ...ticket,
           renderMode: ticket.renderMode ?? '2d',
+          artifactKind: ticket.artifactKind ?? 'concept',
           status:
             legacyStatus === 'prepared'
               ? 'queued'
@@ -378,8 +381,12 @@ export class StudioService {
     )
     const normalizedPreviews = await Promise.all(
       previews.map(async (preview) => {
-        const normalized = { ...preview, renderMode: preview.renderMode ?? ('2d' as const) }
-        if (!preview.renderMode) await db.put('previews', normalized)
+        const normalized = {
+          ...preview,
+          renderMode: preview.renderMode ?? ('2d' as const),
+          artifactKind: preview.artifactKind ?? ('concept' as const),
+        }
+        if (!preview.renderMode || !preview.artifactKind) await db.put('previews', normalized)
         return normalized
       }),
     )
@@ -772,6 +779,87 @@ export class StudioService {
     this.emit()
   }
 
+  async saveAuthoritative3dPreview(capture: AuthoritativeRenderCapture) {
+    if (capture.blob.type !== 'image/png') throw new Error('Authoritative 3D captures must be PNG images.')
+    if (capture.manifest.width !== 1536 || capture.manifest.height !== 1024)
+      throw new Error('Authoritative 3D captures must use the fixed 1536 × 1024 frame.')
+    if (
+      capture.manifest.renderer !== 'three.js' ||
+      capture.manifest.camera.position.length !== 3 ||
+      capture.manifest.camera.quaternion.length !== 4 ||
+      capture.manifest.camera.projectionMatrix.length !== 16 ||
+      ![
+        ...capture.manifest.camera.position,
+        ...capture.manifest.camera.quaternion,
+        ...capture.manifest.camera.projectionMatrix,
+      ].every(Number.isFinite)
+    )
+      throw new Error('Authoritative 3D capture camera provenance is invalid.')
+    await validateRasterBlob(capture.blob, { width: 1536, height: 1024 })
+    const project = clone(this.snapshot.project)
+    if (this.snapshot.draft || this.snapshot.selectedRevision !== project.revision)
+      throw new Error('Authoritative capture requires the latest saved revision.')
+    const [sourceDigest, documentDigest] = await Promise.all([
+      crypto.subtle.digest('SHA-256', await capture.blob.arrayBuffer()),
+      crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(project))),
+    ])
+    const hex = (value: ArrayBuffer) =>
+      [...new Uint8Array(value)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+    const checksum = hex(sourceDigest)
+    if (checksum !== capture.manifest.sourceHash || hex(documentDigest) !== capture.manifest.documentHash)
+      throw new Error('The authoritative capture provenance does not match its raster or project document.')
+
+    const ticketId = newId('render')
+    const blobRef = newId('blob')
+    const createdAt = nowIso()
+    const ticket: PreviewTicket = {
+      id: ticketId,
+      projectId: project.id,
+      target: { kind: 'floor' },
+      sourcePlanRevision: project.revision,
+      renderMode: '3d',
+      artifactKind: 'authoritative',
+      prompt: 'Deterministic Three.js capture from the authoritative metric project document.',
+      status: 'ready',
+      createdAt,
+    }
+    const asset: PreviewAsset = {
+      id: newId('preview'),
+      ticketId,
+      projectId: project.id,
+      target: { kind: 'floor' },
+      sourcePlanRevision: project.revision,
+      renderMode: '3d',
+      artifactKind: 'authoritative',
+      sourceManifest: capture.manifest,
+      prompt: ticket.prompt,
+      mimeType: 'image/png',
+      checksum,
+      blobRef,
+      createdAt,
+    }
+    const db = await database()
+    const tx = db.transaction(['blobs', 'tickets', 'previews', 'projects', 'settings'], 'readwrite')
+    const [activeProjectId, persistedProject] = await Promise.all([
+      tx.objectStore('settings').get('activeProjectId'),
+      tx.objectStore('projects').get(project.id),
+    ])
+    if (activeProjectId !== project.id || persistedProject?.revision !== project.revision) {
+      await tx.done
+      throw new Error('The project revision changed while the authoritative render was captured.')
+    }
+    await Promise.all([
+      tx.objectStore('blobs').put(capture.blob, blobRef),
+      tx.objectStore('tickets').put(ticket),
+      tx.objectStore('previews').put(asset),
+    ])
+    await tx.done
+    this.snapshot.previews = [asset, ...this.snapshot.previews]
+    this.snapshot.tickets = [ticket, ...this.snapshot.tickets]
+    this.emit()
+    return asset
+  }
+
   async commitPreviewAsset(ticket: PreviewTicket, ownerId: string, asset: PreviewAsset, blob: Blob) {
     const db = await database()
     const tx = db.transaction(['blobs', 'tickets', 'previews', 'projects', 'settings'], 'readwrite')
@@ -832,6 +920,7 @@ export class StudioService {
         target: item.target,
         sourcePlanRevision: this.snapshot.project.revision,
         renderMode: '2d',
+        artifactKind: 'concept',
         prompt: item.prompt,
         status: 'ready',
         createdAt: nowIso(),
@@ -843,6 +932,7 @@ export class StudioService {
         target: item.target,
         sourcePlanRevision: this.snapshot.project.revision,
         renderMode: '2d',
+        artifactKind: 'concept',
         prompt: item.prompt,
         mimeType: 'image/png',
         checksum,
