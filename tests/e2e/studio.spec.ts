@@ -70,9 +70,20 @@ test('runs approval, UI render job, WebMCP claim, verified upload, and export', 
       const status = await tools['floor.get_change_status'].execute({ changeId })
       const queued = await tools['floor.get_render_job'].execute({})
       const render = await tools['floor.claim_render_job'].execute({ ticketId: queued.ticketId })
-      const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
-      const binary = atob(base64)
-      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+      const canvas = document.createElement('canvas')
+      canvas.width = 512
+      canvas.height = 512
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Canvas is unavailable.')
+      context.fillStyle = '#d6b48c'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      const blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob((value) => (value ? resolve(value) : reject(new Error('PNG fixture failed.'))), 'image/png'),
+      )
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let binary = ''
+      for (const byte of bytes) binary += String.fromCharCode(byte)
+      const base64 = btoa(binary)
       const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
         .map((byte) => byte.toString(16).padStart(2, '0'))
         .join('')
@@ -95,7 +106,7 @@ test('runs approval, UI render job, WebMCP claim, verified upload, and export', 
     captureTarget: '[data-capture-target="plan-2d"]',
   })
   expect(result.preview).toMatchObject({ sourcePlanRevision: 4 })
-  await expect(page.getByText('Ready', { exact: true })).toBeVisible()
+  await expect(page.getByText('Concept ready', { exact: true }).first()).toBeVisible()
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export current rendered image' }).click()
   const download = await downloadPromise
@@ -146,7 +157,39 @@ test('switches between technical 2D, Three.js 3D, and simple Render output', asy
   await expect(page.getByRole('region', { name: 'Rendered image output' })).toBeVisible()
   await expect(page.getByRole('navigation', { name: '2D component library' })).toHaveCount(0)
   await page.getByRole('button', { name: '3D', exact: true }).last().click()
-  await expect(page.getByText('Isometric floor render')).toBeVisible()
+  await expect(page.getByText('Authoritative isometric render')).toBeVisible()
+  await page.getByRole('button', { name: 'Render', exact: true }).dblclick()
+  await expect(page.getByRole('heading', { name: 'Authoritative isometric render' })).toBeVisible()
+  await expect(page.getByText('Geometry-authoritative', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Metric 3D scene', { exact: true })).toBeVisible()
+  const authoritative = page.getByRole('img', { name: /Authoritative 3D render/ })
+  await expect(authoritative).toBeVisible()
+  await expect(authoritative).toHaveJSProperty('naturalWidth', 1536)
+  await expect(authoritative).toHaveJSProperty('naturalHeight', 1024)
+  const authoritativeCounts = await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('floor-studio', 3)
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => resolve(request.result)
+    })
+    const transaction = db.transaction(['tickets', 'previews'], 'readonly')
+    const readAll = <T>(store: IDBObjectStore) =>
+      new Promise<T[]>((resolve, reject) => {
+        const request = store.getAll()
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => resolve(request.result as T[])
+      })
+    const [tickets, previews] = await Promise.all([
+      readAll<{ artifactKind?: string }>(transaction.objectStore('tickets')),
+      readAll<{ artifactKind?: string }>(transaction.objectStore('previews')),
+    ])
+    db.close()
+    return {
+      tickets: tickets.filter((item) => item.artifactKind === 'authoritative').length,
+      previews: previews.filter((item) => item.artifactKind === 'authoritative').length,
+    }
+  })
+  expect(authoritativeCounts).toEqual({ tickets: 1, previews: 1 })
 })
 
 test('information drawer uses the live render-job catalog', async ({ page }, testInfo) => {

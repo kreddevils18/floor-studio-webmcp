@@ -177,7 +177,9 @@ describe('native WebMCP registration', () => {
       ticketId: string
     }
     const bytes = Uint8Array.from(
-      atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),
+      atob(
+        'iVBORw0KGgoAAAANSUhEUgAAAgAAAAIAAQMAAADOtka5AAAAA1BMVEXWtIxK2dDvAAAANklEQVR42u3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB8G4IAAAFjdVCkAAAAAElFTkSuQmCC',
+      ),
       (character) => character.charCodeAt(0),
     )
     const checksum = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]

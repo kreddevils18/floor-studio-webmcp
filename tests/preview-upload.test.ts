@@ -4,7 +4,14 @@ import { clearDatabaseForTests, database } from '../src/data/database'
 import { PREVIEW_CHUNK_BYTES, PREVIEW_MAX_BYTES, PreviewUploadService } from '../src/domain/preview-upload'
 import { StudioService } from '../src/domain/studio-service'
 
-const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
+const decoded = (base64: string) => Uint8Array.from(atob(base64), (character) => character.charCodeAt(0))
+const png = decoded(
+  'iVBORw0KGgoAAAANSUhEUgAAAgAAAAIAAQMAAADOtka5AAAAA1BMVEXWtIxK2dDvAAAANklEQVR42u3BAQEAAACCIP+vbkhAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB8G4IAAAFjdVCkAAAAAElFTkSuQmCC',
+)
+const tinyPng = decoded('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+const authoritativePng = decoded(
+  'iVBORw0KGgoAAAANSUhEUgAABgAAAAQAAQMAAAAdvwABAAAAA1BMVEX49fNR0qnsAAAA1ElEQVR42u3BAQEAAACAkP6v7ggKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABqBC0AAUx+/FkAAAAASUVORK5CYII=',
+)
 const hex = async (bytes: Uint8Array) =>
   [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource))]
     .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -33,8 +40,43 @@ describe('preview upload bridge', () => {
     })
     const asset = await upload.commit(ticket.id)
     expect(asset.mimeType).toBe('image/png')
+    expect(asset.artifactKind).toBe('concept')
     expect(asset.blobRef).toMatch(/^blob_/)
     expect(service.snapshot.previews[0].id).toBe(asset.id)
+  })
+
+  it('rejects concept rasters that are too small to be meaningful previews', async () => {
+    const ticket = await upload.prepare('2d')
+    await service.claimRenderJob(ticket.id)
+    const tiny = tinyPng
+    await upload.begin(ticket, 'image/png', await hex(tiny), tiny.byteLength)
+    await upload.append(ticket.id, 0, encoded(tiny))
+    await expect(upload.commit(ticket.id)).rejects.toThrow('at least 512 × 512')
+  })
+
+  it('persists an authoritative Three.js capture with project and source provenance', async () => {
+    const projectBytes = new TextEncoder().encode(JSON.stringify(service.snapshot.project))
+    const blob = new Blob([authoritativePng], { type: 'image/png' })
+    Object.defineProperty(blob, 'arrayBuffer', { value: async () => authoritativePng.buffer })
+    const asset = await service.saveAuthoritative3dPreview({
+      blob,
+      manifest: {
+        documentHash: await hex(projectBytes),
+        sourceHash: await hex(authoritativePng),
+        width: 1536,
+        height: 1024,
+        renderer: 'three.js',
+        rendererVersion: 'test',
+        capturedAt: new Date().toISOString(),
+        camera: { position: [1, 2, 3], quaternion: [0, 0, 0, 1], projectionMatrix: Array(16).fill(0) },
+      },
+    })
+    expect(asset).toMatchObject({
+      artifactKind: 'authoritative',
+      renderMode: '3d',
+      sourcePlanRevision: service.snapshot.project.revision,
+    })
+    expect(service.snapshot.tickets[0]).toMatchObject({ status: 'ready', artifactKind: 'authoritative' })
   })
 
   it('rejects wrong order, checksums, unsupported formats, and limits', async () => {
